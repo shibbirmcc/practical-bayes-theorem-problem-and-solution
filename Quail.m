@@ -1,104 +1,100 @@
 classdef Quail
 
 properties(GetAccess = 'public', SetAccess = 'private')
-    H;
-    n;
-    hist;
-    pmf;
-    integratedLikelihood;
-    fairLikelihood;
+
+%% Actual location of the quail    
+%%
+    s;          % actual location
+    
+%% variables needed for the calculation of the location on the grid/hypothesis
+%%
+    H = [];    % hypothesis / grid
+    r;         % rows of the grid
+    c;         % columns of the grid
+    % Meu = set of all estimated locations (x;y) = ( r(:) ; c(:) ) ... 
+    % from where every time one location is being used in the iterations as the value of s  .............(2)
+
+    pmf = [];
+    hist = [];
+    
+%% Parameters for Observation Set as a Normal Distribution
+%%
+    N;          % Sample element number of the observation set
+    sigma;      % Standard Deviation of the normal distribution
+    x = [];     % observation set
+    noise;      % sample noise sequence around the actual position
+    K;          % covariance matrix
 end
 
 
 
 methods
-    function obj = Quail()
-        obj.H = [];
-        obj.n=0;
-        obj.pmf = [];
-        obj.hist = [];
-        obj.integratedLikelihood =0.0;
-        obj.fairLikelihood = 0.0;
+    
+    function obj = Quail(actual_x_location, actual_y_location)
+        
+        obj.s = [ actual_x_location; actual_y_location];          % set the actual location of the quail inside that grid
+        
     end
     
     
     
     
-    function obj = createHist(obj , H)
-        obj.H = H;
-        obj.n = numel(H);
-        obj.pmf = zeros(size(H));
-        obj.hist = [];
-        obj.integratedLikelihood =0.0;
-        obj.fairLikelihood = 0.0;
+    function quail = createObservationSet(quail, N, sigma)
+
+        %% Generating Observation Set as a Normal Distribution
+        %%
+        quail.N = N;                                        % Sample element number of the observation set
+        quail.sigma = sigma;                                % Standard Deviation of the normal distribution
+        quail.K=[ quail.sigma^2 , 0 ; 0 , quail.sigma^2 ];  % covariance matrix
+        quail.noise = 2*randn(2,N);                         % Create a 100-sample noise sequence with that standard deviation
         
-        obj.hist(:,1) = unique(obj.H(:), 'rows');        % unique value
-        obj.hist(:,2) = histc(obj.H(:), obj.hist(:,1));  % frequency
-    end
-        
-    
-    
-    function obj = createPmf(obj)
-%% Creates Probability Mass Function Using Given data
-        if isempty(obj.H) ~= 1 & isempty(obj.hist) ~= 1
-           
-            for i=1:length(obj.hist(:,1))
-                value = obj.hist(i,1);
-                indexes = find(obj.H(:) == value);
-                obj.pmf(indexes) = obj.hist(i,2)/obj.n;
-            end
-            
+        %Creating the observation set with the initial estimation adding some random noise; [ x = N( Meu, sigma^2 ); Normal distribution ]
+        for i=1:N
+            quail.x(:,i) = quail.s + quail.noise(:,i); % We are going to make the observation set by adding noise to the estimated initial state: x = s + n 
         end
+        
     end
     
     
-    function obj = createNormalizedPmf(obj)
-        if isempty(obj.H) ~= 1 & isempty(obj.hist) ~= 1
-           
-            for i=1:length(obj.hist(:,1))
-                value = obj.hist(i,1);
-                indexes = find(obj.H(:) == value);
-                obj.pmf(indexes) = obj.hist(i,2)/obj.n;
+    function quail = createHypothesis(quail, rows, columns)
+        %% Configuring the variables needed for the calculation of the location on the grid / Configuring variables for the hypothesis
+        %%
+
+        quail.H = ones(rows, columns);  % The initial probability of the grid ; all one
+        quail.r = [ 1: 1 : rows];       % Though the grid is a 2-D space so we need to separate the Row and Column locations in two different row matrices
+        quail.c = [ 1: 1 : columns];
+
+        quail = quail.createHist();
+    end
+    
+    
+    function quail = createHist(quail)
+        quail.pmf = zeros(size(quail.H));
+        quail.hist = [];
+        
+        quail.hist(:,1) = unique(quail.H(:), 'rows');        % unique value
+        quail.hist(:,2) = histc(quail.H(:), quail.hist(:,1));  % frequency
+    end
+    
+    
+    function quail = createNormalizedPmf(quail)
+        if isempty(quail.H) ~= 1 & isempty(quail.hist) ~= 1
+            n = numel(quail.H(:));
+            
+            for i=1:length(quail.hist(:,1))
+                value = quail.hist(i,1);
+                indexes = find(quail.H(:) == value);
+                quail.pmf(indexes) = quail.hist(i,2)/n;
             end
             
-            obj.pmf = obj.pmf./sum(obj.pmf(:));
+            quail.pmf = quail.pmf./sum(quail.pmf(:));
         end
     end
     
     
 
-    function obj = createUniformDistribution(obj, low, high, n)
-%% Makes a PMF that represents a suite of hypotheses with equal p.
-        i = 0:1:(n-1);
-        H = (low + (high - low)) * (i/(n-1.00));
-        obj = obj.createHist(H);
-        obj = obj.createPmf();
-    end
-    
-    
-    function obj = getIntegratedLikelihood(obj , evidence)
+    function quail = getLikelihood(quail, Meu)
         
-        obj.integratedLikelihood =0.0;
-        for i=1:length(obj.H)
-            H = obj.H(i);
-            pmfIndex = find(obj.hist(:,1) == obj.H(i));
-            %disp(['H: ' num2str(H) '  pmfIndex: ' num2str(pmfIndex)]);
-            
-            obj = obj.getLikelihood(evidence, obj.H(i));
-            obj.integratedLikelihood = obj.integratedLikelihood + (obj.fairLikelihood * obj.pmf(pmfIndex));
-        end
-        
-    end
-    
-    
-    function obj = getLikelihood(obj, evidence, p_of_H)
-        
-         obj.fairLikelihood = 0.0;
-         
-         count_estimated_evidence_occurs = evidence(1);
-         count_estimated_evidence__not_occurs = sum(evidence(:)) - count_estimated_evidence_occurs;
-         obj.fairLikelihood = (p_of_H^count_estimated_evidence_occurs) * ((1-p_of_H)^count_estimated_evidence__not_occurs);
-         
     end
     
     
